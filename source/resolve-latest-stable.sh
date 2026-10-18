@@ -1,13 +1,15 @@
 #!/bin/bash
 set -euo pipefail
 
-URL="https://docs.unraid.net/unraid-os/download_list/"
-HTML="$(curl -fsSL --retry 3 --connect-timeout 15 "$URL")"
+# Query official Unraid release index
+JSON="$(curl -fsSL --retry 3 --connect-timeout 15 "https://releases.unraid.net/json?includePublic=1")"
 
-# Stable downloadable releases use unRAIDServer-X.Y.Z-x86_64.zip.
-# Pre-releases in the archive do not use this direct-download form.
-printf '%s' "$HTML" \
-  | grep -oE 'unRAIDServer-[0-9]+\.[0-9]+\.[0-9]+-x86_64\.zip' \
-  | sed -E 's/^unRAIDServer-//; s/-x86_64\.zip$//' \
-  | sort -Vu \
-  | tail -n1
+python3 -c "
+import sys, json
+data = json.loads(sys.stdin.read())
+stable = [x['version'] for x in data if '-' not in x.get('version', '') and x.get('published')]
+if stable:
+    print(stable[0])
+else:
+    sys.exit(1)
+" <<< "$JSON"

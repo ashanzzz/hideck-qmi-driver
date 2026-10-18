@@ -28,21 +28,25 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve Unraid version
+      - name: Resolve Unraid version and download URL
         id: resolve
         shell: bash
         env:
           REQUESTED: ${{ github.event.inputs.unraid_version }}
         run: |
           set -euo pipefail
+          JSON="$(curl -fsSL --retry 3 --connect-timeout 15 "https://releases.unraid.net/json?includePublic=1")"
           if [ -n "${REQUESTED:-}" ]; then
             VERSION="$REQUESTED"
           else
-            VERSION="$(bash source/resolve-latest-stable.sh)"
+            VERSION="$(python3 -c "import sys, json; data=json.loads(sys.stdin.read()); stable=[x['version'] for x in data if '-' not in x.get('version', '') and x.get('published')]; print(stable[0])" <<< "$JSON")"
           fi
           test -n "$VERSION"
+          DL_URL="$(python3 -c "import sys, json; data=json.loads(sys.stdin.read()); m={x['version']: x.get('url') for x in data}; print(m.get('$VERSION', ''))" <<< "$JSON")"
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "dl_url=$DL_URL" >> "$GITHUB_OUTPUT"
           echo "Target Unraid: $VERSION"
+          echo "Download URL: $DL_URL"
 
       - name: Skip existing release
         id: gate
@@ -66,9 +70,15 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ steps.resolve.outputs.version }}
+          DL_URL: ${{ steps.resolve.outputs.dl_url }}
         run: |
           set -euo pipefail
           mkdir -p out cache
+          ARCHIVE="unRAIDServer-${VERSION}-x86_64.zip"
+          if [ -n "${DL_URL:-}" ]; then
+            echo "Pre-fetching ${ARCHIVE} into cache from official URL..."
+            curl -fSL --retry 3 --connect-timeout 20 "${DL_URL}" -o "cache/${ARCHIVE}"
+          fi
           docker pull gameonwhales/unraid-module-builder
           docker run --rm \
             -v "$PWD/build-config:/config:ro" \
