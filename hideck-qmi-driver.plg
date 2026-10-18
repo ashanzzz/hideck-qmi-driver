@@ -23,7 +23,7 @@
 </CHANGES>
 
 <FILE Name="&emhttp;/README.md">
-<INLINE>
+<INLINE><![CDATA[
 HiDeck QMI Driver installs the Linux cdc_wdm and qmi_wwan modules needed for
 /dev/cdc-wdmX and wwanX on Unraid releases that do not ship them.
 
@@ -31,11 +31,11 @@ The plugin is intended for HiDeck QMI/UIM use with cellular modems such as the
 Quectel EC25. Driver bundles are built per Unraid release in GitHub Actions.
 Every bundle is SHA-256 checked, then its kernel manifest and module vermagic
 must exactly match the running kernel before anything is copied or loaded.
-</INLINE>
+]]></INLINE>
 </FILE>
 
 <FILE Name="&emhttp;/event/os_update" Mode="0755">
-<INLINE>
+<INLINE><![CDATA[
 #!/bin/bash
 set -u
 
@@ -95,11 +95,11 @@ if ! (cd "$DIR" && sha256sum -c "${BUNDLE}.sha256" >/dev/null 2>&1); then
   exit 0
 fi
 notify "QMI driver staged" "Driver bundle for Unraid ${NEW_VERSION} is cached and will be validated again after reboot." "normal"
-</INLINE>
+]]></INLINE>
 </FILE>
 
 <FILE Name="/usr/local/sbin/hideck-qmi-status" Mode="0755">
-<INLINE>
+<INLINE><![CDATA[
 #!/bin/bash
 set +e
 echo "Unraid: $(cat /etc/unraid-version 2>/dev/null | tr '\n' ' ')"
@@ -116,11 +116,11 @@ ip -br link 2>/dev/null | grep -Ei 'wwan|wwp' || echo "none"
 echo
 echo "Quectel USB devices:"
 lsusb 2>/dev/null | grep -Ei 'Quectel|2c7c' || true
-</INLINE>
+]]></INLINE>
 </FILE>
 
 <FILE Run="/bin/bash">
-<INLINE>
+<INLINE><![CDATA[
 set -e
 
 NAME="&name;"
@@ -216,11 +216,11 @@ else
   notify "QMI driver load failed" "qmi_wwan failed to load for ${KVER}." "alert"
   exit 1
 fi
-</INLINE>
+]]></INLINE>
 </FILE>
 
 <FILE Run="/bin/bash" Method="remove">
-<INLINE>
+<INLINE><![CDATA[
 KVER="$(uname -r)"
 PLUGIN="&plugin;"
 
@@ -236,7 +236,7 @@ fi
 rm -f /usr/local/sbin/hideck-qmi-status
 rm -rf "&emhttp;" "&plugin;"
 echo "HiDeck QMI Driver removed. Reboot if a module remained busy."
-</INLINE>
+]]></INLINE>
 </FILE>
 
 </PLUGIN>
