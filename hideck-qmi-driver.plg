@@ -123,10 +123,10 @@ lsusb 2>/dev/null | grep -Ei 'Quectel|2c7c' || true
 <INLINE><![CDATA[
 set -e
 
-NAME="&name;"
-AUTHOR="&author;"
-REL="&relURL;"
-PACKAGES="&packages;"
+NAME="hideck-qmi-driver"
+AUTHOR="ashanzzz"
+REL="https://github.com/ashanzzz/hideck-qmi-driver/releases/download"
+PACKAGES="/boot/config/plugins/hideck-qmi-driver/packages"
 UNRAID_VERSION="$(sed -n 's/^version="\([^"]*\)"/\1/p' /etc/unraid-version | head -n1)"
 KVER="$(uname -r)"
 
@@ -222,7 +222,7 @@ fi
 <FILE Run="/bin/bash" Method="remove">
 <INLINE><![CDATA[
 KVER="$(uname -r)"
-PLUGIN="&plugin;"
+PLUGIN="/boot/config/plugins/hideck-qmi-driver"
 
 modprobe -r qmi_wwan 2>/dev/null || true
 modprobe -r cdc_wdm 2>/dev/null || true
@@ -234,7 +234,7 @@ if [ -f "${PLUGIN}/custom-${KVER}" ]; then
 fi
 
 rm -f /usr/local/sbin/hideck-qmi-status
-rm -rf "&emhttp;" "&plugin;"
+rm -rf "/usr/local/emhttp/plugins/hideck-qmi-driver" "/boot/config/plugins/hideck-qmi-driver"
 echo "HiDeck QMI Driver removed. Reboot if a module remained busy."
 ]]></INLINE>
 </FILE>
