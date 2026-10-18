@@ -73,19 +73,56 @@ jobs:
           DL_URL: ${{ steps.resolve.outputs.dl_url }}
         run: |
           set -euo pipefail
-          mkdir -p out cache
+          mkdir -p out cache /tmp/unraid-extracted
+
+          # 1. Download official Unraid release
           ARCHIVE="unRAIDServer-${VERSION}-x86_64.zip"
-          if [ -n "${DL_URL:-}" ]; then
-            echo "Pre-fetching ${ARCHIVE} into cache from official URL..."
-            curl -fSL --retry 3 --connect-timeout 20 "${DL_URL}" -o "cache/${ARCHIVE}"
-          fi
-          docker pull gameonwhales/unraid-module-builder
-          docker run --rm \
-            -v "$PWD/build-config:/config:ro" \
-            -v "$PWD/out:/output" \
-            -v "$PWD/cache:/cache" \
-            -e UNRAID_VERSION="$VERSION" \
-            gameonwhales/unraid-module-builder
+          echo "Downloading ${ARCHIVE}..."
+          curl -fSL --retry 3 --connect-timeout 20 "${DL_URL}" -o "cache/${ARCHIVE}"
+          unzip -q -o "cache/${ARCHIVE}" -d /tmp/unraid-extracted
+
+          # 2. Extract bzroot (Unraid 7 uses zstd decompression)
+          sudo apt-get update -qq && sudo apt-get install -y -qq zstd cpio rsync kmod
+          mkdir -p /tmp/stock_root
+          cd /tmp/stock_root
+          BZROOT="/tmp/unraid-extracted/bzroot"
+          SKIP_BLOCKS=$(cpio -ivt -H newc < "$BZROOT" 2>&1 >/dev/null | awk '{print $1}')
+          dd if="$BZROOT" bs=512 skip="$SKIP_BLOCKS" 2>/dev/null | (zstdcat 2>/dev/null || xzcat) | cpio -i -d -H newc --no-absolute-filenames
+
+          # 3. Determine Kernel Version
+          KERNEL_DIR="$(ls -d /tmp/stock_root/usr/src/linux-* 2>/dev/null | head -n1)"
+          test -n "$KERNEL_DIR"
+          KERNEL_VERSION_STR="$(basename "$KERNEL_DIR" | sed 's/^linux-//')"
+          KERNEL_VERSION="$(echo "$KERNEL_VERSION_STR" | cut -d'-' -f1)"
+          echo "Found kernel source for: $KERNEL_VERSION_STR ($KERNEL_VERSION)"
+
+          # 4. Fetch pristine kernel tarball and apply patches
+          MAJOR_VER="$(echo "$KERNEL_VERSION" | cut -d'.' -f1)"
+          TARBALL="linux-${KERNEL_VERSION}.tar.xz"
+          mkdir -p /tmp/kbuild
+          echo "Fetching kernel source: ${TARBALL}..."
+          curl -fSL --retry 3 "https://mirrors.edge.kernel.org/pub/linux/kernel/v${MAJOR_VER}.x/${TARBALL}" -o "cache/${TARBALL}"
+          tar -C /tmp/kbuild --strip-components=1 -xf "cache/${TARBALL}"
+          rsync -aq "$KERNEL_DIR/" /tmp/kbuild/
+
+          cd /tmp/kbuild
+          find . -type f -iname '*.patch' -print0 | xargs -n1 -0 -r patch -p1 -N -i || true
+
+          # 5. Apply configs and build modules
+          cp "$KERNEL_DIR/.config" .config
+          scripts/kconfig/merge_config.sh -m .config $GITHUB_WORKSPACE/build-config/*.config
+          make olddefconfig
+          make modules_prepare
+          
+          # Build cdc-wdm and qmi_wwan
+          make -j$(nproc) M=drivers/usb/class modules
+          cat drivers/usb/class/Module.symvers >> Module.symvers
+          make -j$(nproc) M=drivers/net/usb KBUILD_EXTRA_SYMBOLS=/tmp/kbuild/drivers/usb/class/Module.symvers modules
+
+          # Copy output
+          mkdir -p $GITHUB_WORKSPACE/out
+          cp drivers/usb/class/cdc-wdm.ko $GITHUB_WORKSPACE/out/
+          cp drivers/net/usb/qmi_wwan.ko $GITHUB_WORKSPACE/out/
 
       - name: Package and verify modules
         if: steps.gate.outputs.skip != 'true'
