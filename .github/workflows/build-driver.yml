@@ -1,0 +1,110 @@
+name: build-driver
+
+on:
+  workflow_dispatch:
+    inputs:
+      unraid_version:
+        description: "Unraid version to build for, e.g. 7.3.2. Leave blank for latest stable."
+        required: false
+        default: ""
+      force:
+        description: "Rebuild even if release already exists"
+        type: boolean
+        required: false
+        default: false
+  schedule:
+    - cron: "23 8 * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: hideck-qmi-build
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve Unraid version
+        id: resolve
+        shell: bash
+        env:
+          REQUESTED: ${{ github.event.inputs.unraid_version }}
+        run: |
+          set -euo pipefail
+          if [ -n "${REQUESTED:-}" ]; then
+            VERSION="$REQUESTED"
+          else
+            VERSION="$(bash source/resolve-latest-stable.sh)"
+          fi
+          test -n "$VERSION"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Target Unraid: $VERSION"
+
+      - name: Skip existing release
+        id: gate
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+          FORCE: ${{ github.event.inputs.force }}
+        run: |
+          set -euo pipefail
+          TAG="unraid-${VERSION}"
+          if [ "${FORCE:-false}" != "true" ] && gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG already exists."
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "skip=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build qmi_wwan and cdc_wdm
+        if: steps.gate.outputs.skip != 'true'
+        shell: bash
+        env:
+          VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p out cache
+          docker pull gameonwhales/unraid-module-builder
+          docker run --rm \
+            -v "$PWD/build-config:/config:ro" \
+            -v "$PWD/out:/output" \
+            -v "$PWD/cache:/cache" \
+            -e UNRAID_VERSION="$VERSION" \
+            gameonwhales/unraid-module-builder
+
+      - name: Package and verify modules
+        if: steps.gate.outputs.skip != 'true'
+        id: package
+        shell: bash
+        env:
+          UNRAID_VERSION: ${{ steps.resolve.outputs.version }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq kmod
+          OUTPUT="$(OUT_DIR=out DIST_DIR=dist bash source/package-output.sh)"
+          printf '%s\n' "$OUTPUT"
+          KVER="$(printf '%s\n' "$OUTPUT" | sed -n 's/^KERNEL_VERSION=//p')"
+          echo "kver=$KVER" >> "$GITHUB_OUTPUT"
+
+      - name: Publish release
+        if: steps.gate.outputs.skip != 'true'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.resolve.outputs.version }}
+          KVER: ${{ steps.package.outputs.kver }}
+        run: |
+          set -euo pipefail
+          TAG="unraid-${VERSION}"
+          BUNDLE="dist/hideck-qmi-${VERSION}.tar.gz"
+          gh release delete "$TAG" --yes --cleanup-tag 2>/dev/null || true
+          gh release create "$TAG" \
+            "$BUNDLE" "$BUNDLE.sha256" \
+            --title "HiDeck QMI driver for Unraid ${VERSION}" \
+            --notes "cdc_wdm + qmi_wwan for Unraid ${VERSION}, kernel ${KVER}. The plugin verifies SHA-256 and vermagic before loading."

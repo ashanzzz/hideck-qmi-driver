@@ -1,0 +1,242 @@
+<?xml version='1.0' standalone='yes'?>
+<!DOCTYPE PLUGIN [
+  <!ENTITY name      "hideck-qmi-driver">
+  <!ENTITY author    "ashanzzz">
+  <!ENTITY version   "2026.10.18.1">
+  <!ENTITY pluginURL "https://raw.githubusercontent.com/&author;/&name;/main/&name;.plg">
+  <!ENTITY relURL    "https://github.com/&author;/&name;/releases/download">
+  <!ENTITY plugin    "/boot/config/plugins/&name;">
+  <!ENTITY emhttp    "/usr/local/emhttp/plugins/&name;">
+  <!ENTITY packages  "/boot/config/plugins/&name;/packages">
+]>
+
+<PLUGIN name="&name;" author="&author;" version="&version;" pluginURL="&pluginURL;" min="6.12.0">
+
+<CHANGES>
+###2026.10.18.1
+- Initial release.
+- Installs cdc_wdm and qmi_wwan for the exact Unraid release.
+- Verifies SHA-256, declared kernel version and module vermagic before loading.
+- Caches release bundles on the Unraid boot device.
+- Adds an os_update hook to pre-stage the incoming Unraid release when supported.
+- Refuses cross-kernel module loading; never uses modprobe --force or insmod -f.
+</CHANGES>
+
+<FILE Name="&emhttp;/README.md">
+<INLINE>
+HiDeck QMI Driver installs the Linux cdc_wdm and qmi_wwan modules needed for
+/dev/cdc-wdmX and wwanX on Unraid releases that do not ship them.
+
+The plugin is intended for HiDeck QMI/UIM use with cellular modems such as the
+Quectel EC25. Driver bundles are built per Unraid release in GitHub Actions.
+Every bundle is SHA-256 checked, then its kernel manifest and module vermagic
+must exactly match the running kernel before anything is copied or loaded.
+</INLINE>
+</FILE>
+
+<FILE Name="&emhttp;/event/os_update" Mode="0755">
+<INLINE>
+#!/bin/bash
+set -u
+
+NAME="hideck-qmi-driver"
+AUTHOR="ashanzzz"
+PKG_ROOT="/boot/config/plugins/${NAME}/packages"
+REL="https://github.com/${AUTHOR}/${NAME}/releases/download"
+
+notify() {
+  if [ -x /usr/local/emhttp/webGui/scripts/notify ]; then
+    /usr/local/emhttp/webGui/scripts/notify \
+      -e "HiDeck QMI Driver" -s "$1" -d "$2" -i "${3:-normal}" >/dev/null 2>&1 || true
+  fi
+}
+
+NEW_VERSION="${2:-}"
+NEW_KERNEL="${3:-}"
+
+if [ -z "$NEW_VERSION" ] && [ -r /boot/changes.txt ]; then
+  NEW_VERSION="$(awk '/^Version /{print $2; exit} /^Version:/{print $2; exit}' /boot/changes.txt 2>/dev/null)"
+fi
+
+[ -n "$NEW_VERSION" ] || exit 0
+CURRENT_VERSION="$(sed -n 's/^version="\([^"]*\)"/\1/p' /etc/unraid-version 2>/dev/null | head -n1)"
+[ "$NEW_VERSION" != "$CURRENT_VERSION" ] || exit 0
+
+DIR="${PKG_ROOT}/${NEW_VERSION}"
+BUNDLE="hideck-qmi-${NEW_VERSION}.tar.gz"
+CACHE="${DIR}/${BUNDLE}"
+SUM="${CACHE}.sha256"
+TAG="unraid-${NEW_VERSION}"
+URL="${REL}/${TAG}/${BUNDLE}"
+mkdir -p "$DIR"
+
+if [ -s "$CACHE" ] && [ -s "$SUM" ]; then
+  if (cd "$DIR" && sha256sum -c "${BUNDLE}.sha256" >/dev/null 2>&1); then
+    exit 0
+  fi
+  rm -f "$CACHE" "$SUM"
+fi
+
+echo "HiDeck QMI: staging driver bundle for Unraid ${NEW_VERSION} ${NEW_KERNEL}"
+if ! wget -q -T 30 -O "$CACHE" "$URL"; then
+  rm -f "$CACHE"
+  notify "QMI driver not ready for Unraid ${NEW_VERSION}" \
+    "No matching HiDeck QMI driver release is published yet. Unraid can still reboot, but HiDeck QMI/eSIM may be unavailable until the driver release is built." "warning"
+  exit 0
+fi
+if ! wget -q -T 30 -O "$SUM" "${URL}.sha256"; then
+  rm -f "$CACHE" "$SUM"
+  notify "QMI driver checksum unavailable" "Discarded the staged driver for Unraid ${NEW_VERSION}." "warning"
+  exit 0
+fi
+if ! (cd "$DIR" && sha256sum -c "${BUNDLE}.sha256" >/dev/null 2>&1); then
+  rm -f "$CACHE" "$SUM"
+  notify "QMI driver checksum failed" "Discarded the staged driver for Unraid ${NEW_VERSION}." "alert"
+  exit 0
+fi
+notify "QMI driver staged" "Driver bundle for Unraid ${NEW_VERSION} is cached and will be validated again after reboot." "normal"
+</INLINE>
+</FILE>
+
+<FILE Name="/usr/local/sbin/hideck-qmi-status" Mode="0755">
+<INLINE>
+#!/bin/bash
+set +e
+echo "Unraid: $(cat /etc/unraid-version 2>/dev/null | tr '\n' ' ')"
+echo "Kernel: $(uname -r)"
+echo
+echo "Modules:"
+lsmod | grep -E '^(qmi_wwan|cdc_wdm|usbnet)[[:space:]]' || true
+echo
+echo "QMI control devices:"
+ls -l /dev/cdc-wdm* 2>/dev/null || echo "none"
+echo
+echo "WWAN interfaces:"
+ip -br link 2>/dev/null | grep -Ei 'wwan|wwp' || echo "none"
+echo
+echo "Quectel USB devices:"
+lsusb 2>/dev/null | grep -Ei 'Quectel|2c7c' || true
+</INLINE>
+</FILE>
+
+<FILE Run="/bin/bash">
+<INLINE>
+set -e
+
+NAME="&name;"
+AUTHOR="&author;"
+REL="&relURL;"
+PACKAGES="&packages;"
+UNRAID_VERSION="$(sed -n 's/^version="\([^"]*\)"/\1/p' /etc/unraid-version | head -n1)"
+KVER="$(uname -r)"
+
+[ -n "$UNRAID_VERSION" ] || { echo "ERROR: cannot determine Unraid version"; exit 1; }
+
+DIR="${PACKAGES}/${UNRAID_VERSION}"
+BUNDLE="hideck-qmi-${UNRAID_VERSION}.tar.gz"
+CACHE="${DIR}/${BUNDLE}"
+SUM="${CACHE}.sha256"
+TAG="unraid-${UNRAID_VERSION}"
+URL="${REL}/${TAG}/${BUNDLE}"
+mkdir -p "$DIR"
+
+notify() {
+  if [ -x /usr/local/emhttp/webGui/scripts/notify ]; then
+    /usr/local/emhttp/webGui/scripts/notify \
+      -e "HiDeck QMI Driver" -s "$1" -d "$2" -i "${3:-normal}" >/dev/null 2>&1 || true
+  fi
+}
+
+if [ ! -s "$CACHE" ] || [ ! -s "$SUM" ] || ! (cd "$DIR" && sha256sum -c "${BUNDLE}.sha256" >/dev/null 2>&1); then
+  rm -f "$CACHE" "$SUM"
+  echo "Downloading HiDeck QMI driver for Unraid ${UNRAID_VERSION} ..."
+  if ! wget --show-progress --progress=bar:force:noscroll -T 30 -O "$CACHE" "$URL"; then
+    rm -f "$CACHE"
+    # Future-proofing: if this Unraid release has started shipping the modules
+    # itself, use those rather than requiring our custom release. This fallback
+    # happens only when the exact-version release could not be downloaded.
+    if modinfo cdc_wdm >/dev/null 2>&1 && modinfo qmi_wwan >/dev/null 2>&1; then
+      echo "No custom release found, but this running system provides both modules; using them."
+      modprobe usbnet || true
+      modprobe cdc_wdm
+      modprobe qmi_wwan
+      exit 0
+    fi
+    echo "ERROR: no driver release for Unraid ${UNRAID_VERSION}: ${URL}"
+    echo "Run the GitHub Actions build-driver workflow for this Unraid version."
+    exit 1
+  fi
+  wget -q -T 30 -O "$SUM" "${URL}.sha256" || { rm -f "$CACHE" "$SUM"; exit 1; }
+  (cd "$DIR" && sha256sum -c "${BUNDLE}.sha256") || { rm -f "$CACHE" "$SUM"; exit 1; }
+fi
+
+TMP="$(mktemp -d)"
+trap 'rm -rf "$TMP"' EXIT
+
+tar -xzf "$CACHE" -C "$TMP"
+[ -f "$TMP/manifest.env" ] || { echo "ERROR: bundle manifest missing"; exit 1; }
+# shellcheck disable=SC1090
+. "$TMP/manifest.env"
+
+[ "${UNRAID_VERSION:-}" = "$(sed -n 's/^version="\([^"]*\)"/\1/p' /etc/unraid-version | head -n1)" ] || {
+  echo "ERROR: bundle Unraid version mismatch"; exit 1;
+}
+[ "${KERNEL_VERSION:-}" = "$KVER" ] || {
+  echo "ERROR: bundle kernel ${KERNEL_VERSION:-unknown} does not match running ${KVER}"; exit 1;
+}
+
+CDC="$TMP/modules/cdc-wdm.ko"
+QMI="$TMP/modules/qmi_wwan.ko"
+[ -f "$CDC" ] && [ -f "$QMI" ] || { echo "ERROR: module files missing"; exit 1; }
+CDC_VM="$(modinfo -F vermagic "$CDC" | awk '{print $1}')"
+QMI_VM="$(modinfo -F vermagic "$QMI" | awk '{print $1}')"
+[ "$CDC_VM" = "$KVER" ] && [ "$QMI_VM" = "$KVER" ] || {
+  echo "ERROR: vermagic mismatch; cdc=${CDC_VM} qmi=${QMI_VM} running=${KVER}"; exit 1;
+}
+
+CDC_DEST="/lib/modules/${KVER}/kernel/drivers/usb/class"
+QMI_DEST="/lib/modules/${KVER}/kernel/drivers/net/usb"
+mkdir -p "$CDC_DEST" "$QMI_DEST"
+cp -f "$CDC" "$CDC_DEST/cdc-wdm.ko"
+cp -f "$QMI" "$QMI_DEST/qmi_wwan.ko"
+touch "&plugin;/custom-${KVER}"
+depmod -a
+modprobe usbnet || true
+modprobe cdc_wdm
+modprobe qmi_wwan
+sleep 2
+
+if lsmod | grep -q '^qmi_wwan[[:space:]]'; then
+  echo "HiDeck QMI driver loaded for Unraid ${UNRAID_VERSION}, kernel ${KVER}."
+  ls -l /dev/cdc-wdm* 2>/dev/null || true
+  ip -br link 2>/dev/null | grep -Ei 'wwan|wwp' || true
+  notify "QMI driver loaded" "cdc_wdm and qmi_wwan loaded for ${KVER}." "normal"
+else
+  echo "ERROR: qmi_wwan did not load"
+  notify "QMI driver load failed" "qmi_wwan failed to load for ${KVER}." "alert"
+  exit 1
+fi
+</INLINE>
+</FILE>
+
+<FILE Run="/bin/bash" Method="remove">
+<INLINE>
+KVER="$(uname -r)"
+PLUGIN="&plugin;"
+
+modprobe -r qmi_wwan 2>/dev/null || true
+modprobe -r cdc_wdm 2>/dev/null || true
+
+if [ -f "${PLUGIN}/custom-${KVER}" ]; then
+  rm -f "/lib/modules/${KVER}/kernel/drivers/net/usb/qmi_wwan.ko"
+  rm -f "/lib/modules/${KVER}/kernel/drivers/usb/class/cdc-wdm.ko"
+  depmod -a || true
+fi
+
+rm -f /usr/local/sbin/hideck-qmi-status
+rm -rf "&emhttp;" "&plugin;"
+echo "HiDeck QMI Driver removed. Reboot if a module remained busy."
+</INLINE>
+</FILE>
+
+</PLUGIN>
