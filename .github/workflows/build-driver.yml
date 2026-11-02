@@ -86,7 +86,7 @@ jobs:
           mkdir -p /tmp/stock_root
           cd /tmp/stock_root
           BZROOT="/tmp/unraid-extracted/bzroot"
-          SKIP_BLOCKS=$(cpio -ivt -H newc < "$BZROOT" 2>&1 >/dev/null | awk '{print $1}')
+          SKIP_BLOCKS=$( (cpio -ivt -H newc < "$BZROOT" 2>&1 >/dev/null || true) | awk '{print $1}')
           dd if="$BZROOT" bs=512 skip="$SKIP_BLOCKS" 2>/dev/null | (zstdcat 2>/dev/null || xzcat) | cpio -i -d -H newc --no-absolute-filenames
 
           # 3. Determine Kernel Version
