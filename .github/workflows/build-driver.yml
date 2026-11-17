@@ -81,13 +81,20 @@ jobs:
           curl -fSL --retry 3 --connect-timeout 20 "${DL_URL}" -o "cache/${ARCHIVE}"
           unzip -q -o "cache/${ARCHIVE}" -d /tmp/unraid-extracted
 
-          # 2. Extract bzroot (Unraid 7 uses zstd decompression)
-          sudo apt-get update -qq && sudo apt-get install -y -qq zstd cpio rsync kmod
+          # 2. Extract kernel sources (Unraid 7 uses bzmodules SquashFS; legacy Unraid 6 uses bzroot)
+          sudo apt-get update -qq && sudo apt-get install -y -qq zstd cpio rsync kmod squashfs-tools
           mkdir -p /tmp/stock_root
           cd /tmp/stock_root
-          BZROOT="/tmp/unraid-extracted/bzroot"
-          SKIP_BLOCKS=$( (cpio -ivt -H newc < "$BZROOT" 2>&1 >/dev/null || true) | awk '{print $1}')
-          dd if="$BZROOT" bs=512 skip="$SKIP_BLOCKS" 2>/dev/null | (zstdcat 2>/dev/null || xzcat) | cpio -i -d -H newc --no-absolute-filenames
+
+          if [ -f "/tmp/unraid-extracted/bzmodules" ]; then
+            echo "Unraid 7 detected: extracting /usr/src from bzmodules (SquashFS)..."
+            unsquashfs -d /tmp/stock_root -f /tmp/unraid-extracted/bzmodules 'usr/src/*'
+          else
+            echo "Unraid 6 legacy: extracting from bzroot..."
+            BZROOT="/tmp/unraid-extracted/bzroot"
+            SKIP_BLOCKS=$( (cpio -ivt -H newc < "$BZROOT" 2>&1 >/dev/null || true) | awk '{print $1}')
+            dd if="$BZROOT" bs=512 skip="$SKIP_BLOCKS" 2>/dev/null | (zstdcat 2>/dev/null || xzcat) | cpio -i -d -H newc --no-absolute-filenames
+          fi
 
           # 3. Determine Kernel Version
           KERNEL_DIR="$(ls -d /tmp/stock_root/usr/src/linux-* 2>/dev/null | head -n1)"
@@ -109,7 +116,14 @@ jobs:
           find . -type f -iname '*.patch' -print0 | xargs -n1 -0 -r patch -p1 -N -i || true
 
           # 5. Apply configs and build modules
-          cp "$KERNEL_DIR/.config" .config
+          if [ -f "$KERNEL_DIR/.config" ]; then
+            cp "$KERNEL_DIR/.config" .config
+          elif [ -f "$KERNEL_DIR/config" ]; then
+            cp "$KERNEL_DIR/config" .config
+          else
+            echo "ERROR: no kernel config found in $KERNEL_DIR"
+            exit 1
+          fi
           scripts/kconfig/merge_config.sh -m .config $GITHUB_WORKSPACE/build-config/*.config
           make olddefconfig
           make modules_prepare
