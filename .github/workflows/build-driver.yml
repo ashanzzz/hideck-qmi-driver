@@ -82,7 +82,7 @@ jobs:
           unzip -q -o "cache/${ARCHIVE}" -d /tmp/unraid-extracted
 
           # 2. Extract kernel sources (Unraid 7 uses bzmodules SquashFS; legacy Unraid 6 uses bzroot)
-          sudo apt-get update -qq && sudo apt-get install -y -qq zstd cpio rsync kmod squashfs-tools
+          sudo apt-get update -qq && sudo apt-get install -y -qq zstd cpio rsync kmod squashfs-tools libelf-dev build-essential bc bison flex libssl-dev
           mkdir -p /tmp/stock_root
           cd /tmp/stock_root
 
