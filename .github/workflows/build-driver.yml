@@ -110,8 +110,8 @@ jobs:
           TARBALL="linux-${KERNEL_VERSION}.tar.xz"
           mkdir -p /tmp/kbuild
           echo "Fetching kernel source: ${TARBALL}..."
-          curl -fSL --retry 3 "https://mirrors.edge.kernel.org/pub/linux/kernel/v${MAJOR_VER}.x/${TARBALL}" -o "cache/${TARBALL}"
-          tar -C /tmp/kbuild --strip-components=1 -xf "cache/${TARBALL}"
+          curl -fSL --retry 3 "https://mirrors.edge.kernel.org/pub/linux/kernel/v${MAJOR_VER}.x/${TARBALL}" -o "/tmp/${TARBALL}"
+          tar -C /tmp/kbuild --strip-components=1 -xf "/tmp/${TARBALL}"
           rsync -aq "$KERNEL_DIR/" /tmp/kbuild/
 
           cd /tmp/kbuild
