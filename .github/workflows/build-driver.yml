@@ -87,8 +87,10 @@ jobs:
           cd /tmp/stock_root
 
           if [ -f "/tmp/unraid-extracted/bzmodules" ]; then
-            echo "Unraid 7 detected: extracting /usr/src from bzmodules (SquashFS)..."
-            unsquashfs -d /tmp/stock_root -f /tmp/unraid-extracted/bzmodules 'usr/src/*'
+            echo "Unraid 7 detected: extracting kernel sources from bzmodules (SquashFS)..."
+            unsquashfs -d /tmp/stock_root/usr -f /tmp/unraid-extracted/bzmodules 'src/*' || \
+            unsquashfs -d /tmp/stock_root -f /tmp/unraid-extracted/bzmodules 'usr/src/*' || \
+            unsquashfs -d /tmp/stock_root -f /tmp/unraid-extracted/bzmodules '*linux-*' || true
           else
             echo "Unraid 6 legacy: extracting from bzroot..."
             BZROOT="/tmp/unraid-extracted/bzroot"
@@ -97,7 +99,7 @@ jobs:
           fi
 
           # 3. Determine Kernel Version
-          KERNEL_DIR="$(ls -d /tmp/stock_root/usr/src/linux-* 2>/dev/null | head -n1)"
+          KERNEL_DIR="$(find /tmp/stock_root -maxdepth 4 -type d -name 'linux-*' 2>/dev/null | head -n1)"
           test -n "$KERNEL_DIR"
           KERNEL_VERSION_STR="$(basename "$KERNEL_DIR" | sed 's/^linux-//')"
           KERNEL_VERSION="$(echo "$KERNEL_VERSION_STR" | cut -d'-' -f1)"
